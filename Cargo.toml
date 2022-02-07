@@ -4,6 +4,8 @@ version = "0.1.0"
 authors = ["Xie Zhihao <xzh1206@gmail.com>"]
 edition = "2021"
 description = "Emulate Nintendo Switch controllers over Bluetooth."
+readme = "README.md"
+repository = "https://github.com/zhxie/playwith"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
