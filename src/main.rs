@@ -3,7 +3,7 @@ use structopt::StructOpt;
 
 use playwith as lib;
 
-use lib::Controller;
+use lib::{Controller, ControllerType};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -80,7 +80,7 @@ struct Flags {
         value_name = "CONTROLLER",
         default_value = "PRO_CONTROLLER"
     )]
-    pub controller: lib::protocol::ControllerType,
+    pub controller: ControllerType,
 
     #[structopt(
         long,

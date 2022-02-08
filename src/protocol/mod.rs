@@ -2,68 +2,90 @@
 
 use crate::{Error, ErrorKind, Result};
 use std::fmt::{self, Display, Formatter};
-use std::str::FromStr;
 
-/// Enumeration for controller types.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum ControllerType {
-    /// Represents the Joy-Con (L).
-    JoyConL,
-    /// Represents the Joy-Con (R).
-    JoyConR,
-    /// Represents the Nintendo Switch Pro Controller.
-    ProController,
+/// Enumeration for direction.
+#[repr(u8)]
+pub enum Direction {
+    /// Represents the input (from controller to device) direction.
+    Input = 0xA1,
+    /// Represents the output (from device to controller) direction.
+    Output = 0xA2,
 }
 
-impl ControllerType {
-    /// Returns the Bluetooth controller name.
-    pub fn name(&self) -> &str {
+impl Display for Direction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            ControllerType::JoyConL => "Joy-Con (L)",
-            ControllerType::JoyConR => "Joy-Con (R)",
-            ControllerType::ProController => "Pro Controller",
+            Direction::Input => write!(f, "Input"),
+            Direction::Output => write!(f, "Output"),
         }
     }
 }
 
-impl Display for ControllerType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.name())
-    }
+/// Enumeration for types.
+#[repr(u8)]
+pub enum Type {
+    /// Represents the subcommand.
+    Subcommand = 0x01,
+    /// Represents the rumble.
+    Rumble = 0x10,
+    /// Represents the request of IR, NFC, or MCU data.
+    RequestIrNfcMcu = 0x11,
 }
 
-impl FromStr for ControllerType {
-    type Err = Error;
+impl TryFrom<u8> for Type {
+    type Error = Error;
 
-    fn from_str(s: &str) -> Result<Self> {
-        match s {
-            "JOY_CON_L" => Ok(ControllerType::JoyConL),
-            "JOY_CON_R" => Ok(ControllerType::JoyConR),
-            "PRO_CONTROLLER" => Ok(ControllerType::ProController),
+    fn try_from(value: u8) -> Result<Self> {
+        match value {
+            0x01 => Ok(Type::Subcommand),
+            0x10 => Ok(Type::Rumble),
+            0x11 => Ok(Type::RequestIrNfcMcu),
             _ => Err(Error::new(
                 ErrorKind::Protocol,
-                "unknown controller type".into(),
+                "invalid output type".into(),
             )),
         }
     }
 }
 
-/// Represents a Nintendo Switch controller protocol.
-pub struct Protocol {
-    controller_type: ControllerType,
+/// Enumeration for subcommands,
+pub enum Subcommand {}
+
+pub struct Output {
+    direction: Direction,
+    t: Type,
+    timer: u8,
+    left_rumble: u32,
+    right_rumble: u32,
+    subcommand: Option<u8>,
+    data: Option<Vec<u8>>,
 }
 
-impl Protocol {
-    /// Creates a `Protocol` with the given controller type.
-    pub fn new(controller_type: ControllerType) -> Self {
-        Self { controller_type }
-    }
+impl TryFrom<&[u8]> for Output {
+    type Error = Error;
 
-    /// Returns the controller type.
-    pub fn controller_type(&self) -> ControllerType {
-        return self.controller_type;
-    }
+    fn try_from(value: &[u8]) -> Result<Self> {
+        if value.len() < 12 {
+            return Err(Error::new(
+                ErrorKind::Protocol,
+                "invalid output length".into(),
+            ));
+        }
 
-    /// Resets the state.
-    pub fn reset(&mut self) {}
+        // Direction
+        if value[0] != Direction::Output as u8 {
+            return Err(Error::new(
+                ErrorKind::Protocol,
+                "invalid output direction".into(),
+            ));
+        }
+
+        // Type
+        let t: Type = value[1].try_into()?;
+
+        // Timer
+        let timer = value[2];
+
+        todo!();
+    }
 }

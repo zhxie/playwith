@@ -4,6 +4,7 @@ use log::{debug, info, warn, LevelFilter};
 use std::fmt::{self, Display, Formatter};
 use std::io;
 use std::net::Shutdown;
+use std::str::FromStr;
 
 pub mod bluetooth;
 mod logger;
@@ -14,7 +15,6 @@ use bluetooth::{
     ServiceRecord, Session, SetClass, SocketAddr,
 };
 use logger::Logger;
-use protocol::{ControllerType, Protocol};
 
 /// Enumeration of error kinds.
 #[derive(Debug)]
@@ -109,7 +109,6 @@ const NINTENDO_SWITCH_NAME: &str = "Nintendo Switch";
 const GAMEPAD_JOYSITCK_COD: u32 = 0x002508;
 const CTR_PSM: u16 = 17;
 const ITR_PSM: u16 = 19;
-
 const SERVICE: &str = "00001124-0000-1000-8000-00805f9b34fb";
 const SERVICE_RECORD: &str = r#"<?xml version="1.0" encoding="UTF-8" ?>
 <record>
@@ -226,11 +225,57 @@ const SERVICE_RECORD: &str = r#"<?xml version="1.0" encoding="UTF-8" ?>
 </record>
 "#;
 
+const RECV_MTU: usize = 50;
+
+/// Enumeration for controller types.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum ControllerType {
+    /// Represents the Joy-Con (L).
+    JoyConL,
+    /// Represents the Joy-Con (R).
+    JoyConR,
+    /// Represents the Nintendo Switch Pro Controller.
+    ProController,
+}
+
+impl ControllerType {
+    /// Returns the Bluetooth controller name.
+    pub fn name(&self) -> &str {
+        match self {
+            ControllerType::JoyConL => "Joy-Con (L)",
+            ControllerType::JoyConR => "Joy-Con (R)",
+            ControllerType::ProController => "Pro Controller",
+        }
+    }
+}
+
+impl Display for ControllerType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.name())
+    }
+}
+
+impl FromStr for ControllerType {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "JOY_CON_L" => Ok(ControllerType::JoyConL),
+            "JOY_CON_R" => Ok(ControllerType::JoyConR),
+            "PRO_CONTROLLER" => Ok(ControllerType::ProController),
+            _ => Err(Error::new(
+                ErrorKind::Protocol,
+                "unknown controller type".into(),
+            )),
+        }
+    }
+}
+
 /// Represents an emulated Nintendo Switch controller.
 pub struct Controller {
     session: Session,
     adapter: Adapter,
-    protocol: Protocol,
+    controller_type: ControllerType,
     handle: Option<ProfileHandle>,
     ctr_seq_packet: Option<SeqPacket>,
     itr_seq_packet: Option<SeqPacket>,
@@ -245,11 +290,31 @@ impl Controller {
         Ok(Controller {
             session,
             adapter,
-            protocol: Protocol::new(controller_type),
+            controller_type,
             handle: None,
             ctr_seq_packet: None,
             itr_seq_packet: None,
         })
+    }
+
+    /// Disconnects the paired device.
+    pub fn disconnect(&mut self) {
+        // Close connection
+        if let Some(itr_seq_packet) = &self.itr_seq_packet {
+            if let Err(e) = itr_seq_packet.shutdown(Shutdown::Both) {
+                warn!("{}", e);
+            }
+            self.itr_seq_packet.take();
+        }
+        if let Some(ctr_seq_packet) = &self.ctr_seq_packet {
+            if let Err(e) = ctr_seq_packet.shutdown(Shutdown::Both) {
+                warn!("{}", e);
+            }
+            self.ctr_seq_packet.take();
+        }
+
+        // Unregister service record
+        self.handle.take();
     }
 
     /// Pairs a new device.
@@ -271,8 +336,6 @@ impl Controller {
             };
         }
 
-        self.protocol.reset();
-
         // Listeners
         let addr = self.adapter.address().await?;
         let ctr_listener =
@@ -283,7 +346,7 @@ impl Controller {
         self.adapter.set_powered(true).await?;
         self.adapter.set_pairable(true).await?;
         self.adapter
-            .set_alias(self.protocol.controller_type().name().into())
+            .set_alias(self.controller_type.name().into())
             .await?;
 
         // Register service record
@@ -321,28 +384,19 @@ impl Controller {
         Ok(itr_addr.addr)
     }
 
-    fn close(&mut self) {
-        // Close transportation
-        if let Some(itr_seq_packet) = &self.itr_seq_packet {
-            if let Err(e) = itr_seq_packet.shutdown(Shutdown::Both) {
-                warn!("{}", e);
-            }
-            self.itr_seq_packet.take();
+    /// Receives raw data from the paired device.
+    pub async fn recv(&self, buf: &mut [u8]) -> Result<usize> {
+        match &self.itr_seq_packet {
+            Some(itr_seq_packet) => Ok(itr_seq_packet.recv(buf).await?),
+            None => Err(Error::from(ErrorKind::Io(io::Error::from(
+                io::ErrorKind::NotConnected,
+            )))),
         }
-        if let Some(ctr_seq_packet) = &self.ctr_seq_packet {
-            if let Err(e) = ctr_seq_packet.shutdown(Shutdown::Both) {
-                warn!("{}", e);
-            }
-            self.ctr_seq_packet.take();
-        }
-
-        // Unregister service record
-        self.handle.take();
     }
 }
 
 impl Drop for Controller {
     fn drop(&mut self) {
-        self.close();
+        self.disconnect();
     }
 }
